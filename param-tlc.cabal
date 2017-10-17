@@ -10,12 +10,15 @@ Synopsis:	 Demonstration project for parameterized-utils
 library
   build-depends:
     base >= 4.9,
+    containers,
     lens,
+    mtl,
     parameterized-utils >= 0.1.12
 
   exposed-modules:
     TLC.AST
     TLC.Eval
+    TLC.TypeCheck
 
   default-language: Haskell2010
 
