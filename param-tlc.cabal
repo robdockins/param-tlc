@@ -30,5 +30,6 @@ executable demo-tlc
 
   build-depends:
     base >= 4.9,
+    mtl,
     param-tlc,
     parameterized-utils

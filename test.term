@@ -1,0 +1,3 @@
+TmAbs "a" BoolT (TmAbs "b" IntT (TmApp (TmApp (TmAbs "x" IntT (TmAbs "y" IntT (TmVar "a"))) (TmInt 43)) (TmInt 121)))
+TmBool True
+TmInt 12

@@ -1,5 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
@@ -9,6 +11,9 @@ module Main where
 
 import Control.Monad (forM)
 import Control.Monad.ST
+import Control.Monad.Except
+import System.IO
+
 
 import Data.Parameterized.Classes
 import Data.Parameterized.Context
@@ -16,34 +21,41 @@ import Data.Parameterized.TraversableFC
 
 import TLC.AST
 import TLC.Eval
+import qualified TLC.TypeCheck as T
+
+testTerm :: T.Term
+testTerm =
+       T.TmAbs "a" T.BoolT $
+       T.TmAbs "b" T.IntT $
+         (T.TmAbs "x" T.IntT $
+          T.TmAbs "y" T.IntT $
+            (T.TmVar "a"))
+         `T.TmApp`
+           T.TmInt 43
+         `T.TmApp`
+           T.TmInt 121
+
 
 fib :: Term EmptyCtx (IntT :-> IntT)
-fib = TmFix knownRepr $ λ $
-        TmIte (TmLe (Var @1) 1)
+fib = μ $ λ $
+        TmIte (Var @1 :<= 1)
               (Var @1)
-              (TmAdd (Var @0 :@ (TmAdd (Var @1) (-1)))
-                     (Var @0 :@ (TmAdd (Var @1) (-2))))
+              ((Var @0 :@ (Var @1 + (-1)))
+                + 
+               (Var @0 :@ (Var @1 + (-2)))
+              )
 
 fib' :: Term EmptyCtx (IntT :-> IntT)
-fib' = λ (TmIte (TmLe (Var @0) 1)
-                 (Var @0)
-                 (fibaux :@ TmAdd (Var @0) (-2) :@ 1 :@ 1))
+fib' = λ (TmIte (Var @0 :<= 1)
+                (Var @0)
+                (fibaux :@ Var @0 + (-2) :@ 1 :@ 1))
 
  where
  fibaux :: Term (EmptyCtx ::> x) (IntT :-> IntT :-> IntT :-> IntT)
- fibaux  = TmFix knownRepr $ λ $ λ $ λ $
-            TmIte (TmLe (Var @2) 0)
+ fibaux  = μ $ λ $ λ $ λ $
+            TmIte (Var @2 :<= 0)
                   (Var @4)
-                  (Var @1 :@ TmAdd (Var @2) (-1) :@ Var @4 :@ TmAdd (Var @3) (Var @4))
-
-testTerm :: Term EmptyCtx (BoolT :-> IntT :-> BoolT)
-testTerm = λ (λ (λ (λ (Var @0)) :@ TmInt 43 :@ TmInt 121))
-
-testTerm1 :: Term EmptyCtx (IntT :-> BoolT)
-testTerm1 = testTerm :@ TmBool True
-
-testTerm2 :: Term EmptyCtx BoolT
-testTerm2 = testTerm1 :@ TmInt 12
+                  (Var @1 :@ Var @2 + (-1) :@ Var @4 :@ (Var @3) + (Var @4))
 
 display :: Term EmptyCtx τ -> IO ()
 display tm =
@@ -58,13 +70,63 @@ display tm =
      putStrLn ""
 
 
-main =
-  do display testTerm
-     display testTerm1
-     display testTerm2
+main :: IO ()
+--main = testMain
+main = fibMain
+--main = getContents >>= readMain . lines
 
-     forM [10 .. 20] $ \n ->
-       display (fib :@ TmInt n)
+readMain :: [String] -> IO ()
+readMain tms =
+  do results <- checkTerms tms
 
-     forM [10 .. 20] $ \n ->
-       display (fib' :@ TmInt n)
+     forM_ results (\case
+        T.TCResult tp tm ->
+          do putStrLn "Type:"
+             print tp
+             display tm)
+
+     T.TCResult tp t <- applyTerms results
+     display t
+
+
+applyTerms :: [T.TCResult γ] -> IO (T.TCResult γ)
+applyTerms [] = fail "Empty list of terms!"
+applyTerms (T.TCResult tp f : xs) = go tp f xs
+ where
+ go :: TypeRepr τ -> Term γ τ -> [T.TCResult γ] -> IO (T.TCResult γ)
+ go tp tm [] = return $ T.TCResult tp tm
+ go (ArrowRepr τ₁ τ₂) f (T.TCResult σ x : ts)
+   | Just Refl <- testEquality τ₁ σ
+   = go τ₂ (f :@ x) ts
+ go tp _ (T.TCResult xtp _ : _)
+   = fail $ unwords [ "Cannot apply term of type", show tp, "to a term of type", show xtp]  
+
+
+checkTerms :: [String] -> IO [T.TCResult EmptyCtx]
+checkTerms [] = return []
+checkTerms (t:ts) =
+  do Right t' <- return . runExcept . T.checkTerm . read $ t
+     ts' <- checkTerms ts
+     return (t':ts')
+
+testMain :: IO ()
+testMain =
+  do Right (T.TCResult tp t) <- return $ runExcept (T.checkTerm testTerm)
+     Just Refl <- return $ testEquality tp (ArrowRepr BoolRepr (ArrowRepr IntRepr BoolRepr))
+
+     display t
+     display (t :@ TmBool True)
+     display (t :@ TmBool True :@ TmInt 12)
+
+     -- display testTerm
+     -- display testTerm1
+     -- display testTerm2
+
+fibMain :: IO ()
+fibMain =
+  do 
+     -- forM_ [10 .. 20] $ \n ->
+     --    display (fib :@ TmInt n)
+
+     forM_ [10 .. 20] $ \n ->
+        display (fib' :@ TmInt n)

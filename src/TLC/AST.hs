@@ -39,6 +39,14 @@ data TypeRepr :: Type -> * where
   BoolRepr  :: TypeRepr BoolT
   IntRepr   :: TypeRepr IntT
 
+instance ShowF TypeRepr where
+  showF IntRepr = "IntT"
+  showF BoolRepr = "BoolT"
+  showF (ArrowRepr x y) = showF x <+> ":->" <+> "(" <> showF y <> ")"
+
+instance Show (TypeRepr τ) where
+  show = showF
+
 instance KnownRepr TypeRepr IntT where knownRepr = IntRepr
 instance KnownRepr TypeRepr BoolT where knownRepr = BoolRepr
 instance (KnownRepr TypeRepr τ₁, KnownRepr TypeRepr τ₂) => KnownRepr TypeRepr (τ₁ :-> τ₂) where
@@ -63,7 +71,7 @@ data Term (γ :: Ctx Type) (τ :: Type) :: * where
   TmIte  :: Term γ BoolT -> Term γ τ -> Term γ τ -> Term γ τ
   TmApp  :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
   TmAbs  :: TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
-  TmFix  :: TypeRepr τ -> Term (γ ::> τ) τ   -> Term γ τ
+  TmFix  :: TypeRepr τ  -> Term (γ ::> τ)  τ  -> Term γ τ
 
 infixl 5 :@
 
@@ -82,10 +90,15 @@ pattern x :@ y = TmApp x y
 λ :: KnownRepr TypeRepr τ₁ => Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
 λ x = TmAbs knownRepr x
 
+μ :: KnownRepr TypeRepr τ => Term (γ ::> τ) τ -> Term γ τ
+μ x = TmFix knownRepr x
+
 pattern Var :: forall n γ τ. Idx n γ τ => Term γ τ
 pattern Var <- TmVar (testEquality (natIndex @n) -> Just Refl)
  where Var = TmVar (natIndex @n)
 
+pattern (:<=) :: Term γ IntT -> Term γ IntT -> Term γ BoolT
+pattern x :<= y = TmLe x y
 
 (<+>) :: String -> String -> String
 x <+> y = x <> " " <> y
@@ -131,6 +144,8 @@ computeType env tm = case tm of
   TmAbs τ₁ x ->
     let τ₂ = computeType (env :> τ₁) x in ArrowRepr τ₁ τ₂
   TmFix τ _ -> τ
+
+
 
 data Value (f :: Type -> *) (τ :: Type) :: * where
   VInt   :: Int -> Value f IntT
