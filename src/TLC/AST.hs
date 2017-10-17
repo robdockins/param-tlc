@@ -24,7 +24,7 @@ import Data.Functor.Const
 import Data.Monoid
 
 import Data.Parameterized.Classes
-import Data.Parameterized.Context hiding ((++))
+import Data.Parameterized.Context as Ctx hiding ((++)) 
 import Data.Parameterized.TraversableFC
 
 data Type where
@@ -63,6 +63,7 @@ instance TestEquality TypeRepr where
 
 data Term (γ :: Ctx Type) (τ :: Type) :: * where
   TmVar  :: Index γ τ -> Term γ τ
+  TmWeak :: Term γ τ -> Term (γ ::> τ') τ
   TmInt  :: Int -> Term γ IntT
   TmLe   :: Term γ IntT -> Term γ IntT -> Term γ BoolT
   TmAdd  :: Term γ IntT -> Term γ IntT -> Term γ IntT
@@ -108,6 +109,7 @@ printTerm :: Assignment (Const String) γ
           -> String
 printTerm pvar tm = case tm of
   TmVar i -> getConst (pvar!i)
+  TmWeak x -> printTerm (Ctx.init pvar) x
   TmInt n -> show n
   TmBool b -> show b
   TmLe x y -> "(" <> printTerm pvar x <+> "<=" <+> printTerm pvar y <> ")"
@@ -133,6 +135,7 @@ computeType ::
   TypeRepr τ
 computeType env tm = case tm of
   TmVar i -> env!i
+  TmWeak x -> computeType (Ctx.init env) x
   TmInt _ -> IntRepr
   TmBool _ -> BoolRepr
   TmLe _ _ -> BoolRepr

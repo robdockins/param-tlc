@@ -23,47 +23,23 @@ import Control.Monad.ST
 import Data.STRef
 
 import Data.Parameterized.Classes
-import Data.Parameterized.Context hiding ((++))
+import Data.Parameterized.Context as Ctx hiding ((++))
 import Data.Parameterized.TraversableFC
 
 import TLC.AST
 
 -------------------------------------------------------------------
--- Weakening, substitution, and full-β evaluation
+-- Substitution and full-β evaluation
 --
 
-type Weaken γ₁ γ₂ = Assignment (Index γ₁) γ₂
 type Subst γ₁ γ₂  = Assignment (Term γ₁) γ₂
-
-extend_wk ::
-  Size γ₁ ->
-  Weaken γ₁ γ₂ ->
-  Weaken (γ₁ ::> τ) (γ₂ ::> τ)
-extend_wk sz wk =
-  fmapFC skip wk :> nextIndex sz
-
-weaken ::
-  Size γ₁ ->
-  Weaken γ₁ γ₂ ->
-  Term γ₂ τ -> Term γ₁ τ
-weaken sz wk tm = case tm of
-  TmVar i     -> TmVar (wk!i)
-  TmBool b    -> TmBool b
-  TmInt n     -> TmInt n
-  TmLe x y    -> TmLe (weaken sz wk x) (weaken sz wk y)
-  TmAdd x y   -> TmAdd (weaken sz wk x) (weaken sz wk y)
-  TmNeg x     -> TmNeg (weaken sz wk x)
-  TmIte c x y -> TmIte (weaken sz wk c) (weaken sz wk x) (weaken sz wk y)
-  TmApp x y   -> TmApp (weaken sz wk x) (weaken sz wk y)
-  TmAbs τ x   -> TmAbs τ (weaken (incSize sz) (extend_wk sz wk) x)
-  TmFix τ x   -> TmFix τ (weaken (incSize sz) (extend_wk sz wk) x)
 
 extend_sub ::
   Size γ₁ ->
   Subst γ₁ γ₂ ->
   Subst (γ₁ ::> τ) (γ₂ ::> τ)
 extend_sub sz sub =
-  fmapFC (weaken (incSize sz) (generate sz skip)) sub :> TmVar (nextIndex sz)
+  fmapFC TmWeak sub :> TmVar (nextIndex sz)
 
 subst ::
   Size γ₁ ->
@@ -71,6 +47,7 @@ subst ::
   Term γ₂ τ -> Term γ₁ τ
 subst sz sub tm = case tm of
   TmVar i     -> sub!i
+  TmWeak x    -> subst sz (Ctx.init sub) x
   TmBool b    -> TmBool b
   TmInt n     -> TmInt n
   TmLe x y    -> TmLe (subst sz sub x) (subst sz sub y)
@@ -90,6 +67,7 @@ singleSubst sz tm body = subst sz (generate sz TmVar :> tm) body
 substEval :: Size γ -> Term γ τ -> Term γ τ
 substEval sz tm = case tm of
   TmVar i  -> TmVar i
+  TmWeak x -> TmWeak (substEval (decSize sz) x)
   TmBool x -> TmBool x
   TmInt n  -> TmInt n
   TmLe x y ->
@@ -133,6 +111,7 @@ cbvEval ::
    Value CBV τ
 cbvEval env tm = case tm of
    TmVar i  -> unCBV (env!i)
+   TmWeak x -> cbvEval (Ctx.init env) x
    TmBool b -> VBool b
    TmInt n  -> VInt n
    TmLe x y ->
@@ -186,6 +165,8 @@ cbnEval ::
 cbnEval env tm = case tm of
    TmVar i ->
         force (env!i)
+   TmWeak x ->
+        cbnEval (Ctx.init env) x
    TmBool b ->
         return $ VBool b
    TmInt n ->

@@ -48,14 +48,14 @@ fib = μ $ λ $
 fib' :: Term EmptyCtx (IntT :-> IntT)
 fib' = λ (TmIte (Var @0 :<= 1)
                 (Var @0)
-                (fibaux :@ Var @0 + (-2) :@ 1 :@ 1))
+                (TmWeak fibaux :@ Var @0 + (-2) :@ 1 :@ 1))
 
  where
- fibaux :: Term (EmptyCtx ::> x) (IntT :-> IntT :-> IntT :-> IntT)
+ fibaux :: Term EmptyCtx (IntT :-> IntT :-> IntT :-> IntT)
  fibaux  = μ $ λ $ λ $ λ $
-            TmIte (Var @2 :<= 0)
-                  (Var @4)
-                  (Var @1 :@ Var @2 + (-1) :@ Var @4 :@ (Var @3) + (Var @4))
+            TmIte (Var @1 :<= 0)
+                  (Var @3)
+                  (Var @0 :@ Var @1 + (-1) :@ Var @3 :@ (Var @2) + (Var @3))
 
 display :: Term EmptyCtx τ -> IO ()
 display tm =
@@ -69,11 +69,6 @@ display tm =
      putStrLn (runST (show <$> cbnEval Empty tm))
      putStrLn ""
 
-
-main :: IO ()
---main = testMain
-main = fibMain
---main = getContents >>= readMain . lines
 
 readMain :: [String] -> IO ()
 readMain tms =
@@ -130,3 +125,10 @@ fibMain =
 
      forM_ [10 .. 20] $ \n ->
         display (fib' :@ TmInt n)
+
+
+main :: IO ()
+--main = testMain
+main = fibMain
+--main = getContents >>= readMain . lines
+
