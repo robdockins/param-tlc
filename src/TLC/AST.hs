@@ -21,10 +21,9 @@
 module TLC.AST where
 
 import Data.Functor.Const
-import Data.Monoid
 
 import Data.Parameterized.Classes
-import Data.Parameterized.Context as Ctx hiding ((++)) 
+import Data.Parameterized.Context as Ctx hiding ((++))
 import Data.Parameterized.TraversableFC
 
 data Type where
@@ -39,13 +38,14 @@ data TypeRepr :: Type -> * where
   BoolRepr  :: TypeRepr BoolT
   IntRepr   :: TypeRepr IntT
 
-instance ShowF TypeRepr where
-  showF IntRepr = "IntT"
-  showF BoolRepr = "BoolT"
-  showF (ArrowRepr x y) = showF x <+> ":->" <+> "(" <> showF y <> ")"
-
 instance Show (TypeRepr τ) where
-  show = showF
+  showsPrec _ IntRepr  = showString "IntT"
+  showsPrec _ BoolRepr = showString "BoolT"
+  showsPrec d (ArrowRepr x y) =
+     showParen (d > 5) $
+       showsPrec 6 x . showString " :-> " . showsPrec 5 y
+
+instance ShowF TypeRepr
 
 instance KnownRepr TypeRepr IntT where knownRepr = IntRepr
 instance KnownRepr TypeRepr BoolT where knownRepr = BoolRepr
@@ -101,32 +101,38 @@ pattern Var <- TmVar (testEquality (natIndex @n) -> Just Refl)
 pattern (:<=) :: Term γ IntT -> Term γ IntT -> Term γ BoolT
 pattern x :<= y = TmLe x y
 
-(<+>) :: String -> String -> String
-x <+> y = x <> " " <> y
-
-printTerm :: Assignment (Const String) γ
+printTerm :: Assignment (Const (Int -> ShowS)) γ
+          -> Int
           -> Term γ τ
-          -> String
-printTerm pvar tm = case tm of
-  TmVar i -> getConst (pvar!i)
-  TmWeak x -> printTerm (Ctx.init pvar) x
-  TmInt n -> show n
-  TmBool b -> show b
-  TmLe x y -> "(" <> printTerm pvar x <+> "<=" <+> printTerm pvar y <> ")"
-  TmAdd x y -> "(" <> printTerm pvar x <+> "+" <+> printTerm pvar y <> ")"
-  TmNeg x -> "(negate" <+> printTerm pvar x <> ")"
-  TmIte c x y -> "if" <+> printTerm pvar c <+>
-                   "then" <+> printTerm pvar x <+> "else" <+> printTerm pvar y
-  TmApp x y -> "(" <> printTerm pvar x <> ")" <+> printTerm pvar y 
-  TmFix _ x ->
-    let vnm = "v" ++ show (sizeInt (size pvar)) in
-    "μ" <> vnm <> "." <+> printTerm (pvar :> Const vnm) x
-  TmAbs _ x ->
-    let vnm = "v" ++ show (sizeInt (size pvar)) in
-    "λ" <> vnm <> "." <+> printTerm (pvar :> Const vnm) x
+          -> ShowS
+printTerm pvar prec tm = case tm of
+  TmVar i -> getConst (pvar!i) prec
+  TmWeak x -> printTerm (Ctx.init pvar) prec x
+  TmInt n -> shows n
+  TmBool b -> shows b
+  TmLe x y -> showParen (prec > 6) (printTerm pvar 7 x . showString " <= " . printTerm pvar 7 y)
+  TmAdd x y -> showParen (prec > 5) (printTerm pvar 6 x . showString " + " . printTerm pvar 6 y)
+  TmNeg x -> showParen (prec > 10) (showString "negate " . printTerm pvar 11 x)
+  TmIte c x y -> showParen (prec > 3) $
+                 showString "if " . printTerm pvar 0 c .
+                 showString " then " . printTerm pvar 4 x .
+                 showString " else " . printTerm pvar 4 y
+  TmApp x y -> showParen (prec > 10) (printTerm pvar 10 x) . showString " " . printTerm pvar 11 y
+  TmFix tp x ->
+    let vnm _prec = showString "v" . shows (sizeInt (size pvar)) in
+    showParen (prec > 0) $
+      showString "μ" . vnm 0 .
+      showString " : " . showsPrec 0 tp .
+      showString ". " . printTerm (pvar :> Const vnm) 0 x
+  TmAbs tp x ->
+    let vnm _prec = showString "v" . shows (sizeInt (size pvar)) in
+    showParen (prec > 0) $
+      showString "λ" . vnm 0 .
+      showString " : " . showsPrec 0 tp .
+      showString ". " . printTerm (pvar :> Const vnm) 0 x
 
 instance KnownContext γ => Show (Term γ τ) where
-  show = printTerm (generate knownSize (Const . show . indexVal))
+  showsPrec = printTerm (generate knownSize (\i -> Const (\_ -> shows (indexVal i))))
 
 
 computeType ::
@@ -149,17 +155,16 @@ computeType env tm = case tm of
   TmFix τ _ -> τ
 
 
-
 data Value (f :: Type -> *) (τ :: Type) :: * where
   VInt   :: Int -> Value f IntT
   VBool  :: Bool -> Value f BoolT
   VAbs   :: Assignment f γ -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Value f (τ₁ :-> τ₂)
 
 instance ShowFC Value where
-  showFC sh (VInt n) = show n
-  showFC sh (VBool b) = show b
-  showFC sh (VAbs env τ tm) = printTerm (fmapFC (Const . sh) env) (TmAbs τ tm)
-instance ShowF f => ShowF (Value f) where
-  showF = showFC showF
+  showsPrecFC _sh _prec (VInt n) = shows n
+  showsPrecFC _sh _prec (VBool b) = shows b
+  showsPrecFC sh prec (VAbs env τ tm) =
+     printTerm (fmapFC (\x -> Const (\p -> sh p x)) env) prec (TmAbs τ tm)
+instance ShowF f => ShowF (Value f)
 instance ShowF f => Show (Value f τ) where
-  show = showF
+  show = showFC showF

@@ -100,10 +100,9 @@ substEval sz tm = case tm of
 
 newtype CBV τ = CBV { unCBV :: Value CBV τ }
 
-instance ShowF CBV where
-  showF (CBV x) = show x
+instance ShowF CBV
 instance Show (CBV τ) where
-  show = showF
+  show (CBV x) = show x
 
 cbvEval ::
    Assignment CBV γ ->
@@ -144,9 +143,8 @@ type CBN s τ = Value (Thunk s) τ
 newtype Thunk s τ = Thunk (STRef s (ST s (CBN s τ)))
 
 instance Show (Thunk s τ) where
-  show = showF
-instance ShowF (Thunk s) where
-  showF _ = "<thunk>"
+  show _ = "<thunk>"
+instance ShowF (Thunk s)
 
 delay :: ST s (CBN s τ) -> ST s (Thunk s τ)
 delay x = Thunk <$> newSTRef x
