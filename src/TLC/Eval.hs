@@ -55,8 +55,8 @@ weaken sz wk tm = case tm of
   TmNeg x     -> TmNeg (weaken sz wk x)
   TmIte c x y -> TmIte (weaken sz wk c) (weaken sz wk x) (weaken sz wk y)
   TmApp x y   -> TmApp (weaken sz wk x) (weaken sz wk y)
-  TmAbs x     -> TmAbs (weaken (incSize sz) (extend_wk sz wk) x)
-  TmFix x     -> TmFix (weaken (incSize sz) (extend_wk sz wk) x)
+  TmAbs τ x   -> TmAbs τ (weaken (incSize sz) (extend_wk sz wk) x)
+  TmFix τ x   -> TmFix τ (weaken (incSize sz) (extend_wk sz wk) x)
 
 extend_sub ::
   Size γ₁ ->
@@ -78,8 +78,8 @@ subst sz sub tm = case tm of
   TmNeg x     -> TmNeg (subst sz sub x)
   TmIte c x y -> TmIte (subst sz sub c) (subst sz sub x) (subst sz sub y)
   TmApp x y   -> TmApp (subst sz sub x) (subst sz sub y)
-  TmAbs x     -> TmAbs (subst (incSize sz) (extend_sub sz sub) x)
-  TmFix x     -> TmFix (subst (incSize sz) (extend_sub sz sub) x)
+  TmAbs τ x   -> TmAbs τ (subst (incSize sz) (extend_sub sz sub) x)
+  TmFix τ x   -> TmFix τ (subst (incSize sz) (extend_sub sz sub) x)
 
 substEval :: Size γ -> Term γ τ -> Term γ τ
 substEval sz tm = case tm of
@@ -98,7 +98,7 @@ substEval sz tm = case tm of
      case (substEval sz x, substEval sz y) of
        (TmInt a, TmInt b) -> TmInt $! a + b
        (x',y') -> TmAdd x' y'
-  TmAbs x  -> TmAbs (substEval (incSize sz) x)
+  TmAbs τ x  -> TmAbs τ (substEval (incSize sz) x)
   TmIte c x y ->
      case substEval sz c of
        TmBool True  -> substEval sz x
@@ -106,9 +106,9 @@ substEval sz tm = case tm of
        c' -> TmIte c' x y
   TmApp x y ->
      case substEval sz x of
-       TmAbs body -> substEval sz (subst sz (generate sz TmVar :> y) body)
+       TmAbs _ body -> substEval sz (subst sz (generate sz TmVar :> y) body)
        x' -> TmApp x' y
-  TmFix x ->
+  TmFix _ x ->
      substEval sz (subst sz (generate sz TmVar :> tm) x)
 
 -------------------------------------------------
@@ -142,13 +142,13 @@ cbvEval env tm = case tm of
      case cbvEval env c of
        VBool True  -> cbvEval env x
        VBool False -> cbvEval env y
-   TmAbs x -> VAbs env x
+   TmAbs τ x -> VAbs env τ x
    TmApp x y ->
      case cbvEval env x of
-       VAbs env' body ->
+       VAbs env' _ body ->
          let y' = CBV $ cbvEval env y in
          seq y' (cbvEval (env' :> y') body)
-   TmFix x ->
+   TmFix _ x ->
      fix $ \x' -> cbvEval (env :> CBV x') x
 
 -------------------------------------------------
@@ -198,13 +198,13 @@ cbnEval env tm = case tm of
      do cbnEval env c >>= \case
           VBool True  -> cbnEval env x
           VBool False -> cbnEval env y
-   TmAbs x -> return $ VAbs env x
+   TmAbs τ x -> return $ VAbs env τ x
    TmApp x y ->
      do cbnEval env x >>= \case
-          VAbs env' body ->
+          VAbs env' _ body ->
             do y' <- delay (cbnEval env y)
                cbnEval (env' :> y') body
-   TmFix x ->
+   TmFix _ x ->
      mfix $ \x' ->
        do xthunk <- delay (return x')
           cbnEval (env :> xthunk) x
