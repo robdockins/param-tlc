@@ -28,12 +28,34 @@ import Data.Parameterized.TraversableFC
 
 import TLC.AST
 
+----------------------------------------------------------------
+-- |
+-- Module               : TLC.Eval
+-- Copyright            : (c) Galois, Inc.  2017
+-- Maintainter          : Robert Dockins <rdockins@galois.com>
+-- Synopsis             : Evaluation strategies for STLC
+--
+-- This module defines several different evaluation strategies
+-- for the STLC.  Each takes advantage of the GADT indices
+-- on the term language to ensure that evaluation is well typed.
+--
+-- Sometimes this requires a very particular way to set up the
+-- evaluation definitions.  In particular, the substituion algorithm
+-- is most easily expressed using "mutli-substitution", which may
+-- be less famlilar than single variable substituion.
+-------------------------------------------------------------------
+
 -------------------------------------------------------------------
 -- Substitution and full-β evaluation
 --
 
+-- | A @Subst@ assigns to each free variable in @γ₂@
+--   a term with free variables in @γ₁@.
 type Subst γ₁ γ₂  = Assignment (Term γ₁) γ₂
 
+-- | This is a utility operation that extends a
+--   substitution with a fresh variable that will
+--   be unchanged.
 extend_sub ::
   Size γ₁ ->
   Subst γ₁ γ₂ ->
@@ -41,6 +63,8 @@ extend_sub ::
 extend_sub sz sub =
   fmapFC TmWeak sub :> TmVar (nextIndex sz)
 
+-- | Given a substition and a term, apply the substituion to
+--   all the free variables in the term.
 subst ::
   Size γ₁ ->
   Subst γ₁ γ₂ ->
@@ -55,15 +79,19 @@ subst sz sub tm = case tm of
   TmNeg x     -> TmNeg (subst sz sub x)
   TmIte c x y -> TmIte (subst sz sub c) (subst sz sub x) (subst sz sub y)
   TmApp x y   -> TmApp (subst sz sub x) (subst sz sub y)
-  TmAbs τ x   -> TmAbs τ (subst (incSize sz) (extend_sub sz sub) x)
-  TmFix τ x   -> TmFix τ (subst (incSize sz) (extend_sub sz sub) x)
+  TmAbs nm τ x -> TmAbs nm τ (subst (incSize sz) (extend_sub sz sub) x)
+  TmFix nm τ x -> TmFix nm τ (subst (incSize sz) (extend_sub sz sub) x)
 
+-- | Substitute a term for a single open variable, leaving all other
+--   variables unchanged.
 singleSubst ::
   Size γ ->
-  Term γ τ -> Term (γ ::> τ) τ' ->
+  Term γ τ {-^ The term to substitute -} ->
+  Term (γ ::> τ) τ' {-^ The term being substituted into -} ->
   Term γ τ'
 singleSubst sz tm body = subst sz (generate sz TmVar :> tm) body
 
+-- | Perform full-β normalization on a λ term.
 substEval :: Size γ -> Term γ τ -> Term γ τ
 substEval sz tm = case tm of
   TmVar i  -> TmVar i
@@ -77,12 +105,12 @@ substEval sz tm = case tm of
   TmNeg x ->
      case substEval sz x of
        TmInt a -> TmInt $! negate a
-       x' -> TmNeg x
+       x' -> TmNeg x'
   TmAdd x y ->
      case (substEval sz x, substEval sz y) of
        (TmInt a, TmInt b) -> TmInt $! a + b
        (x',y') -> TmAdd x' y'
-  TmAbs τ x  -> TmAbs τ (substEval (incSize sz) x)
+  TmAbs nm τ x  -> TmAbs nm τ (substEval (incSize sz) x)
   TmIte c x y ->
      case substEval sz c of
        TmBool True  -> substEval sz x
@@ -90,20 +118,26 @@ substEval sz tm = case tm of
        c' -> TmIte c' x y
   TmApp x y ->
      case substEval sz x of
-       TmAbs _ body -> substEval sz (singleSubst sz y body)
+       TmAbs _ _ body -> substEval sz (singleSubst sz y body)
        x' -> TmApp x' y
-  TmFix _ x ->
+  TmFix _ _ x ->
      substEval sz (singleSubst sz tm x)
 
 -------------------------------------------------
 -- Call by value evaluation
 
+-- | Tie the knot directly through the @Value@ type.
+--   This corresponds directly to call-by-value
+--   evaluation.
 newtype CBV τ = CBV { unCBV :: Value CBV τ }
 
 instance ShowF CBV
 instance Show (CBV τ) where
   show (CBV x) = show x
 
+-- | Call-by-value evalaution.  Given an assignment of
+--   values to the free variables in @γ@, evaluate the
+--   given term to a @Value@.
 cbvEval ::
    Assignment CBV γ ->
    Term γ τ ->
@@ -115,6 +149,7 @@ cbvEval env tm = case tm of
    TmInt n  -> VInt n
    TmLe x y ->
      case (cbvEval env x, cbvEval env y) of
+       -- NB! GHC knows that this is the only possibility!
        (VInt a, VInt b) -> VBool $! a <= b
    TmAdd x y ->
      case (cbvEval env x, cbvEval env y) of
@@ -126,29 +161,40 @@ cbvEval env tm = case tm of
      case cbvEval env c of
        VBool True  -> cbvEval env x
        VBool False -> cbvEval env y
-   TmAbs τ x ->
+   TmAbs _ τ x ->
+     -- NB: here we capture the current evaluation environment as a closure
      VAbs env τ x
    TmApp x y ->
      case cbvEval env x of
        VAbs env' _ body ->
-         let y' = CBV $! cbvEval env y in
+         -- NB: we have to @seq@ this to force GHC to evaluate in CBV order
+         let y' = CBV (cbvEval env y) in
          seq y' (cbvEval (env' :> y') body)
-   TmFix _ x ->
+   TmFix _ _ x ->
      fix $ \x' -> cbvEval (env :> CBV x') x
 
 -------------------------------------------------
 -- Call by need evaluation
 
-type CBN s τ = Value (Thunk s) τ
+-- | The @Thunk@ type represents a potentially delayed
+--   evaluation operation.  These delayed operations live
+--   in the @ST@ monad, so that we can memoize the answers
+--   using @STRef@.  If our calculus had side-effects, we might
+--   instead embed it in some other monad (e.g. @IO@ or @StateT x (ST s)@).
 newtype Thunk s τ = Thunk (STRef s (ST s (CBN s τ)))
+type CBN s τ = Value (Thunk s) τ
 
 instance Show (Thunk s τ) where
   show _ = "<thunk>"
 instance ShowF (Thunk s)
 
+-- | Given a computation that computes a value,
+--   produce a thunk that delays the relevant computation.
 delay :: ST s (CBN s τ) -> ST s (Thunk s τ)
 delay x = Thunk <$> newSTRef x
 
+-- | Given a delayed evalation thunk, force and
+--   memoize its value.
 force :: Thunk s τ -> ST s (CBN s τ)
 force (Thunk ref) =
    do x <- readSTRef ref
@@ -156,6 +202,8 @@ force (Thunk ref) =
       writeSTRef ref (return val)
       return val
 
+-- | Given an assigment of evaluation thunks to the free variables
+--   in @γ@, compute the call-by-need evalaution of the given term.
 cbnEval ::
    Assignment (Thunk s) γ ->
    Term γ τ ->
@@ -183,13 +231,13 @@ cbnEval env tm = case tm of
    TmIte c x y ->
      do VBool c' <- cbnEval env c
         if c' then cbnEval env x else cbnEval env y
-   TmAbs τ x ->
+   TmAbs _ τ x ->
         return $ VAbs env τ x
    TmApp x y ->
      do VAbs env' _ body <- cbnEval env x
         y' <- delay (cbnEval env y)
         cbnEval (env' :> y') body
-   TmFix _ x ->
+   TmFix _ _ x ->
      mfix $ \result ->
        do resultThunk <- delay (return result)
           cbnEval (env :> resultThunk) x

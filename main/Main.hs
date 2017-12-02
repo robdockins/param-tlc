@@ -37,7 +37,7 @@ testTerm =
 
 
 fib :: Term EmptyCtx (IntT :-> IntT)
-fib = μ $ λ $
+fib = μ "fib" $ λ "x" $
         TmIte (Var @1 :<= 1)
               (Var @1)
               ((Var @0 :@ (Var @1 + (-1)))
@@ -46,13 +46,13 @@ fib = μ $ λ $
               )
 
 fib' :: Term EmptyCtx (IntT :-> IntT)
-fib' = λ (TmIte (Var @0 :<= 1)
+fib' = λ "x" (TmIte (Var @0 :<= 1)
                 (Var @0)
                 (TmWeak fibaux :@ Var @0 + (-2) :@ 1 :@ 1))
 
  where
  fibaux :: Term EmptyCtx (IntT :-> IntT :-> IntT :-> IntT)
- fibaux  = μ $ λ $ λ $ λ $
+ fibaux  = μ "fibaux" $ λ "a" $ λ "b" $ λ "c" $
             TmIte (Var @1 :<= 0)
                   (Var @3)
                   (Var @0 :@ Var @1 + (-1) :@ Var @3 :@ (Var @2) + (Var @3))
@@ -129,6 +129,6 @@ fibMain =
 
 main :: IO ()
 --main = testMain
-main = fibMain
---main = getContents >>= readMain . lines
+--main = fibMain
+main = getContents >>= readMain . lines
 
