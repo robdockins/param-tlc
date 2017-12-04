@@ -158,14 +158,14 @@ printTerm pvar prec tm = case tm of
     let nm' = if Prelude.null nm then "v" else nm
         vnm _prec = showString nm' . shows (sizeInt (size pvar)) in
     showParen (prec > 0) $
-      showString "μ" . vnm 0 .
+      showString "μ " . vnm 0 .
       showString " : " . showsPrec 0 tp .
       showString ". " . printTerm (pvar :> Const vnm) 0 x
   TmAbs nm tp x ->
     let nm' = if Prelude.null nm then "v" else nm
         vnm _prec = showString nm' . shows (sizeInt (size pvar)) in
     showParen (prec > 0) $
-      showString "λ" . vnm 0 .
+      showString "λ " . vnm 0 .
       showString " : " . showsPrec 0 tp .
       showString ". " . printTerm (pvar :> Const vnm) 0 x
 
