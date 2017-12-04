@@ -52,7 +52,7 @@ fib' = λ "x" (TmIte (Var @0 :<= 1)
 
  where
  fibaux :: Term EmptyCtx (IntT :-> IntT :-> IntT :-> IntT)
- fibaux  = μ "fibaux" $ λ "a" $ λ "b" $ λ "c" $
+ fibaux  = μ "fibaux" $ λ "n" $ λ "x" $ λ "y" $
             TmIte (Var @1 :<= 0)
                   (Var @3)
                   (Var @0 :@ Var @1 + (-1) :@ Var @3 :@ (Var @2) + (Var @3))
@@ -119,11 +119,7 @@ testMain =
 
 fibMain :: IO ()
 fibMain =
-  do 
-     -- forM_ [10 .. 20] $ \n ->
-     --    display (fib :@ TmInt n)
-
-     forM_ [10 .. 20] $ \n ->
+  do forM_ [10 .. 20] $ \n ->
         display (fib' :@ TmInt n)
 
 
