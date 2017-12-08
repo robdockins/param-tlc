@@ -1,4 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -6,10 +5,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RebindableSyntax #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -35,6 +35,7 @@
 
 module TLC.TypeCheck where
 
+import Prelude
 import Control.Monad.Except
 
 import Data.List
@@ -166,6 +167,13 @@ verifyTyping scope env tm = case tm of
      do TCResult (AST.TupleRepr tys) x' <- verifyTyping scope env x
         Just (Some idx') <- return (intIndex idx (size tys))
         return $ TCResult (tys!idx') (AST.TmProj x' idx')
+
+ where
+   fail msg = throwError $ unlines
+               [ "Error during typechecking"
+               , show tm
+               , msg
+               ]
 
 -- | Typecheck a term in the empty typing context.
 checkTerm ::

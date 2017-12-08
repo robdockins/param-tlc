@@ -12,8 +12,8 @@ module Main where
 import Control.Monad (forM)
 import Control.Monad.ST
 import Control.Monad.Except
+import System.Exit
 import System.IO
-
 
 import Data.Parameterized.Classes
 import Data.Parameterized.Context
@@ -94,15 +94,19 @@ applyTerms (T.TCResult tp f : xs) = go tp f xs
    | Just Refl <- testEquality τ₁ σ
    = go τ₂ (f :@ x) ts
  go tp _ (T.TCResult xtp _ : _)
-   = fail $ unwords [ "Cannot apply term of type", show tp, "to a term of type", show xtp]  
-
+   = do putStrLn $ unlines [ "Cannot apply term of type:", show tp, "to a term of type:", show xtp]
+        exitFailure
 
 checkTerms :: [String] -> IO [T.TCResult EmptyCtx]
 checkTerms [] = return []
 checkTerms (t:ts) =
-  do Right t' <- return . runExcept . T.checkTerm . read $ t
-     ts' <- checkTerms ts
-     return (t':ts')
+  do case runExcept . T.checkTerm . read $ t of
+       Left msg ->
+         do putStr msg
+            exitFailure
+       Right t' ->
+         do ts' <- checkTerms ts
+            return (t':ts')
 
 testMain :: IO ()
 testMain =
