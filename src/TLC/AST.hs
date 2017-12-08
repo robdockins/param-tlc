@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Werror #-}
 {-# OPTIONS -Wincomplete-patterns #-}
@@ -53,6 +54,7 @@ data Type where
   (:->) :: Type -> Type -> Type
   BoolT :: Type
   IntT  :: Type
+  Tuple :: Ctx Type -> Type
 
 infixr 5 :->
 
@@ -64,6 +66,7 @@ data TypeRepr :: Type -> * where
   ArrowRepr :: TypeRepr τ₁ -> TypeRepr τ₂ -> TypeRepr (τ₁ :-> τ₂)
   BoolRepr  :: TypeRepr BoolT
   IntRepr   :: TypeRepr IntT
+  TupleRepr :: Assignment TypeRepr ctx -> TypeRepr (Tuple ctx)
 
 instance Show (TypeRepr τ) where
   showsPrec _ IntRepr  = showString "IntT"
@@ -71,6 +74,15 @@ instance Show (TypeRepr τ) where
   showsPrec d (ArrowRepr x y) =
      showParen (d > 5) $
        showsPrec 6 x . showString " :-> " . showsPrec 5 y
+  showsPrec _ (TupleRepr ctx) =
+     case view ctx of
+       AssignEmpty -> showString "Tuple()"
+       AssignExtend ctx' t ->
+         showString "Tuple" . showParen True
+           (foldrFC (\tp x -> showsPrec 0 tp . showString ", " . x)
+                    (showsPrec 0 t)
+                    ctx'
+           )
 
 instance ShowF TypeRepr
 
@@ -78,6 +90,8 @@ instance KnownRepr TypeRepr IntT where knownRepr = IntRepr
 instance KnownRepr TypeRepr BoolT where knownRepr = BoolRepr
 instance (KnownRepr TypeRepr τ₁, KnownRepr TypeRepr τ₂) => KnownRepr TypeRepr (τ₁ :-> τ₂) where
   knownRepr = ArrowRepr knownRepr knownRepr
+instance (KnownRepr (Assignment TypeRepr) ctx) => KnownRepr TypeRepr (Tuple ctx) where
+  knownRepr = TupleRepr knownRepr
 
 instance TestEquality TypeRepr where
   testEquality BoolRepr BoolRepr = return Refl
@@ -86,6 +100,9 @@ instance TestEquality TypeRepr where
     do Refl <- testEquality x₁ y₁
        Refl <- testEquality x₂ y₂
        return Refl
+  testEquality (TupleRepr ctx1) (TupleRepr ctx2) =
+    do Refl <- testEquality ctx1 ctx2
+       return Refl
   testEquality _ _ = Nothing
 
 -- | This is the main term representation for our STLC.  It is explicitly
@@ -93,17 +110,19 @@ instance TestEquality TypeRepr where
 --   The first 'γ', is a context that fixes the types of the free variables
 --   occuring in the term.  The second 'τ', is the result type of the term.
 data Term (γ :: Ctx Type) (τ :: Type) :: * where
-  TmVar  :: Index γ τ -> Term γ τ
-  TmWeak :: Term γ τ -> Term (γ ::> τ') τ
-  TmInt  :: Int -> Term γ IntT
-  TmLe   :: Term γ IntT -> Term γ IntT -> Term γ BoolT
-  TmAdd  :: Term γ IntT -> Term γ IntT -> Term γ IntT
-  TmNeg  :: Term γ IntT -> Term γ IntT
-  TmBool :: Bool -> Term γ BoolT
-  TmIte  :: Term γ BoolT -> Term γ τ -> Term γ τ -> Term γ τ
-  TmApp  :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
-  TmAbs  :: String -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
-  TmFix  :: String -> TypeRepr τ  -> Term (γ ::> τ)  τ  -> Term γ τ
+  TmVar   :: Index γ τ -> Term γ τ
+  TmWeak  :: Term γ τ -> Term (γ ::> τ') τ
+  TmInt   :: Int -> Term γ IntT
+  TmLe    :: Term γ IntT -> Term γ IntT -> Term γ BoolT
+  TmAdd   :: Term γ IntT -> Term γ IntT -> Term γ IntT
+  TmNeg   :: Term γ IntT -> Term γ IntT
+  TmBool  :: Bool -> Term γ BoolT
+  TmIte   :: Term γ BoolT -> Term γ τ -> Term γ τ -> Term γ τ
+  TmApp   :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
+  TmAbs   :: String -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
+  TmFix   :: String -> TypeRepr τ  -> Term (γ ::> τ)  τ  -> Term γ τ
+  TmTuple :: Assignment (Term γ) ctx -> Term γ (Tuple ctx)
+  TmProj  :: Term γ (Tuple ctx) -> Index ctx τ -> Term γ τ
 
 infixl 5 :@
 
@@ -169,6 +188,18 @@ printTerm pvar prec tm = case tm of
       showString " : " . showsPrec 0 tp .
       showString ". " . printTerm (pvar :> Const vnm) 0 x
 
+  TmTuple ctx ->
+    case view ctx of
+      AssignEmpty -> showString "tuple()"
+      AssignExtend ctx' t ->
+        showString "tuple" . showParen True (
+          foldrFC (\tm x -> printTerm pvar 0 tm . showString ", " . x)
+                  (printTerm pvar 0 t)
+                  ctx'
+          )
+  TmProj x idx ->
+    printTerm pvar 11 x . showString "." . shows (indexVal idx)
+
 instance KnownContext γ => Show (Term γ τ) where
   showsPrec = printTerm (generate knownSize (\i -> Const (\_ -> shows (indexVal i))))
 
@@ -193,6 +224,10 @@ computeType env tm = case tm of
   TmAbs _ τ₁ x ->
     let τ₂ = computeType (env :> τ₁) x in ArrowRepr τ₁ τ₂
   TmFix _ τ _ -> τ
+  TmTuple ctx -> TupleRepr (fmapFC (computeType env) ctx)
+  TmProj x idx ->
+    case computeType env x of
+      TupleRepr ctx -> ctx!idx
 
 -- | A generic representation of values.  A value for this calculus
 --   is either a basic value of one of the base types (Int or Bool)
@@ -206,12 +241,21 @@ data Value (f :: Type -> *) (τ :: Type) :: * where
   VInt   :: Int -> Value f IntT
   VBool  :: Bool -> Value f BoolT
   VAbs   :: Assignment f γ -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Value f (τ₁ :-> τ₂)
+  VTuple :: Assignment f ctx -> Value f (Tuple ctx)
 
 instance ShowFC Value where
   showsPrecFC _sh _prec (VInt n) = shows n
   showsPrecFC _sh _prec (VBool b) = shows b
   showsPrecFC sh prec (VAbs env τ tm) =
      printTerm (fmapFC (\x -> Const (\p -> sh p x)) env) prec (TmAbs [] τ tm)
+  showsPrecFC sh prec (VTuple xs) =
+     case view xs of
+       AssignEmpty -> showString "tuple()"
+       AssignExtend xs' t ->
+         showString "tuple" . showParen True (
+           foldrFC (\tm x -> sh 0 tm . showString ", " . x) (sh 0 t) xs'
+         )
+
 instance ShowF f => ShowF (Value f)
 instance ShowF f => Show (Value f τ) where
   show = showFC showF

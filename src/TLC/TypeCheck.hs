@@ -61,12 +61,15 @@ data Term where
   TmApp  :: Term -> Term -> Term
   TmAbs  :: String -> Type -> Term -> Term
   TmFix  :: String -> Type -> Term -> Term
+  TmTuple :: [Term] -> Term
+  TmProj  :: Term -> Int -> Term
  deriving (Show, Read, Eq, Ord)
 
 data Type where
   IntT :: Type
   BoolT :: Type
   ArrowT :: Type -> Type -> Type
+  TupleT :: [Type] -> Type
  deriving (Show, Read, Eq, Ord)
 
 typeToRepr ::
@@ -77,6 +80,9 @@ typeToRepr BoolT = Some AST.BoolRepr
 typeToRepr (ArrowT x y) =
   case (typeToRepr x, typeToRepr y) of
     (Some x', Some y') -> Some (AST.ArrowRepr x' y')
+typeToRepr (TupleT xs) =
+  case fromList (map typeToRepr xs) of
+    Some xs -> Some (AST.TupleRepr xs)
 
 -- | The result of a typechecking operation in the context
 --   of free variable context @γ@ is a type repr and
@@ -148,6 +154,18 @@ verifyTyping scope env tm = case tm of
         TCResult xtp x' <- verifyTyping (nm:scope) (env :> argTy) x
         Just Refl <- return $ testEquality argTy xtp
         return $ TCResult xtp (AST.TmFix nm argTy x')
+   TmTuple xs ->
+     do let go :: Assignment AST.TypeRepr ctx ->
+                  Assignment (AST.Term γ) ctx ->
+                  [TCResult γ] ->
+                  TCResult γ
+            go tys tms [] = TCResult (AST.TupleRepr tys) (AST.TmTuple tms)
+            go tys tms (TCResult ty tm : rest) = go (tys :> ty) (tms :> tm) rest
+        go Empty Empty <$> traverse (verifyTyping scope env) xs
+   TmProj x idx ->
+     do TCResult (AST.TupleRepr tys) x' <- verifyTyping scope env x
+        Just (Some idx') <- return (intIndex idx (size tys))
+        return $ TCResult (tys!idx') (AST.TmProj x' idx')
 
 -- | Typecheck a term in the empty typing context.
 checkTerm ::

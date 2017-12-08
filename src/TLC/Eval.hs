@@ -81,6 +81,8 @@ subst sz sub tm = case tm of
   TmApp x y   -> TmApp (subst sz sub x) (subst sz sub y)
   TmAbs nm τ x -> TmAbs nm τ (subst (incSize sz) (extend_sub sz sub) x)
   TmFix nm τ x -> TmFix nm τ (subst (incSize sz) (extend_sub sz sub) x)
+  TmTuple xs   -> TmTuple (fmapFC (subst sz sub) xs)
+  TmProj x idx -> TmProj (subst sz sub x) idx
 
 -- | Substitute a term for a single open variable, leaving all other
 --   variables unchanged.
@@ -122,6 +124,12 @@ substEval sz tm = case tm of
        x' -> TmApp x' y
   TmFix _ _ x ->
      substEval sz (singleSubst sz tm x)
+  TmTuple xs ->
+     TmTuple (fmapFC (substEval sz) xs)
+  TmProj x idx ->
+     case substEval sz x of
+       TmTuple xs -> substEval sz (xs!idx)
+       x' -> TmProj x' idx
 
 -------------------------------------------------
 -- Call by value evaluation
@@ -172,6 +180,11 @@ cbvEval env tm = case tm of
          seq y' (cbvEval (env' :> y') body)
    TmFix _ _ x ->
      fix $ \x' -> cbvEval (env :> CBV x') x
+   TmTuple xs ->
+     VTuple (fmapFC (CBV . cbvEval env) xs)
+   TmProj x idx ->
+     case cbvEval env x of
+       VTuple xs -> unCBV (xs!idx)
 
 -------------------------------------------------
 -- Call by need evaluation
@@ -241,3 +254,8 @@ cbnEval env tm = case tm of
      mfix $ \result ->
        do resultThunk <- delay (return result)
           cbnEval (env :> resultThunk) x
+   TmTuple xs ->
+        VTuple <$> traverseFC (delay . cbnEval env) xs
+   TmProj x idx ->
+     do VTuple xs <- cbnEval env x
+        force (xs!idx)
