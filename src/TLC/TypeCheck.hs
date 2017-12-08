@@ -9,6 +9,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RebindableSyntax #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -34,6 +35,7 @@
 
 module TLC.TypeCheck where
 
+import Prelude
 import Control.Monad.Except
 
 import Data.List
@@ -147,6 +149,13 @@ verifyTyping scope env tm = case tm of
         TCResult xtp x' <- verifyTyping (nm:scope) (env :> argTy) x
         Just Refl <- return $ testEquality argTy xtp
         return $ TCResult xtp (AST.TmFix nm argTy x')
+
+ where
+   fail msg = throwError $ unlines
+               [ "Error during typechecking"
+               , show tm
+               , msg
+               ]
 
 -- | Typecheck a term in the empty typing context.
 checkTerm ::
