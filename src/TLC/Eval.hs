@@ -78,6 +78,9 @@ subst sz sub tm = case tm of
   TmAdd x y   -> TmAdd (subst sz sub x) (subst sz sub y)
   TmNeg x     -> TmNeg (subst sz sub x)
   TmIte c x y -> TmIte (subst sz sub c) (subst sz sub x) (subst sz sub y)
+  TmPair x y  -> TmPair (subst sz sub x) (subst sz sub y)
+  TmFst x     -> TmFst (subst sz sub x)
+  TmSnd x     -> TmSnd (subst sz sub x)
   TmApp x y   -> TmApp (subst sz sub x) (subst sz sub y)
   TmAbs nm τ x -> TmAbs nm τ (subst (incSize sz) (extend_sub sz sub) x)
   TmFix nm τ x -> TmFix nm τ (subst (incSize sz) (extend_sub sz sub) x)
@@ -116,6 +119,16 @@ substEval sz tm = case tm of
        TmBool True  -> substEval sz x
        TmBool False -> substEval sz y
        c' -> TmIte c' x y
+  TmPair x y ->
+     TmPair (substEval sz x) (substEval sz y)
+  TmFst x ->
+     case substEval sz x of
+       TmPair a _ -> a
+       x' -> TmFst x'
+  TmSnd x ->
+     case substEval sz x of
+       TmPair _ b -> b
+       x' -> TmSnd x'
   TmApp x y ->
      case substEval sz x of
        TmAbs _ _ body -> substEval sz (singleSubst sz y body)
@@ -161,6 +174,14 @@ cbvEval env tm = case tm of
      case cbvEval env c of
        VBool True  -> cbvEval env x
        VBool False -> cbvEval env y
+   TmPair x y ->
+     VPair (CBV $ cbvEval env x) (CBV $ cbvEval env y)
+   TmFst x ->
+     case cbvEval env x of
+       VPair (CBV a) _ -> a
+   TmSnd x ->
+     case cbvEval env x of
+       VPair _ (CBV b) -> b
    TmAbs _ τ x ->
      -- NB: here we capture the current evaluation environment as a closure
      VAbs env τ x
@@ -231,6 +252,16 @@ cbnEval env tm = case tm of
    TmIte c x y ->
      do VBool c' <- cbnEval env c
         if c' then cbnEval env x else cbnEval env y
+   TmPair x y ->
+     do x' <- delay (cbnEval env x)
+        y' <- delay (cbnEval env y)
+        return $ VPair x' y'
+   TmFst x ->
+     do VPair a _ <- cbnEval env x
+        force a
+   TmSnd x ->
+     do VPair _ b <- cbnEval env x
+        force b
    TmAbs _ τ x ->
         return $ VAbs env τ x
    TmApp x y ->

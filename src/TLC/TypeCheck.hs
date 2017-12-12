@@ -61,12 +61,16 @@ data Term where
   TmApp  :: Term -> Term -> Term
   TmAbs  :: String -> Type -> Term -> Term
   TmFix  :: String -> Type -> Term -> Term
+  TmPair :: Term -> Term -> Term
+  TmFst  :: Term -> Term
+  TmSnd  :: Term -> Term
  deriving (Show, Read, Eq, Ord)
 
 data Type where
   IntT :: Type
   BoolT :: Type
   ArrowT :: Type -> Type -> Type
+  PairT :: Type -> Type -> Type
  deriving (Show, Read, Eq, Ord)
 
 typeToRepr ::
@@ -77,6 +81,9 @@ typeToRepr BoolT = Some AST.BoolRepr
 typeToRepr (ArrowT x y) =
   case (typeToRepr x, typeToRepr y) of
     (Some x', Some y') -> Some (AST.ArrowRepr x' y')
+typeToRepr (PairT x y) =
+  case (typeToRepr x, typeToRepr y) of
+    (Some x', Some y') -> Some (AST.PairRepr x' y')
 
 -- | The result of a typechecking operation in the context
 --   of free variable context @γ@ is a type repr and
@@ -134,6 +141,16 @@ verifyTyping scope env tm = case tm of
         TCResult ytp y' <- verifyTyping scope env y
         Just Refl <- return $ testEquality xtp ytp
         return $ TCResult xtp (AST.TmIte c' x' y')
+   TmPair x y ->
+     do TCResult xtp x' <- verifyTyping scope env x
+        TCResult ytp y' <- verifyTyping scope env y
+        return $ TCResult (AST.PairRepr xtp ytp) (AST.TmPair x' y')
+   TmFst x ->
+     do TCResult (AST.PairRepr atp _btp) x' <- verifyTyping scope env x
+        return $ TCResult atp (AST.TmFst x')
+   TmSnd x ->
+     do TCResult (AST.PairRepr _atp btp) x' <- verifyTyping scope env x
+        return $ TCResult btp (AST.TmSnd x')
    TmApp x y ->
      do TCResult (AST.ArrowRepr argTy outTy) x' <- verifyTyping scope env x
         TCResult ytp y' <- verifyTyping scope env y

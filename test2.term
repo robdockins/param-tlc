@@ -1,0 +1,4 @@
+TmPair (TmInt 1) (TmPair (TmInt 2) (TmInt 3))
+TmFst (TmPair (TmInt 1) (TmPair (TmInt 2) (TmInt 3)))
+TmSnd (TmPair (TmInt 1) (TmPair (TmInt 2) (TmInt 3)))
+TmSnd (TmSnd (TmPair (TmInt 1) (TmPair (TmInt 2) (TmInt 3))))

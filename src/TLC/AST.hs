@@ -53,8 +53,10 @@ data Type where
   (:->) :: Type -> Type -> Type
   BoolT :: Type
   IntT  :: Type
+  (:*:) :: Type -> Type -> Type
 
 infixr 5 :->
+infixr 6 :*:
 
 -- | The 'TypeRepr' family is a run-time representation of the
 --   data kind 'Type' it allows us to do runtime tests and computation
@@ -64,6 +66,7 @@ data TypeRepr :: Type -> * where
   ArrowRepr :: TypeRepr τ₁ -> TypeRepr τ₂ -> TypeRepr (τ₁ :-> τ₂)
   BoolRepr  :: TypeRepr BoolT
   IntRepr   :: TypeRepr IntT
+  PairRepr  :: TypeRepr τ₁ -> TypeRepr τ₂ -> TypeRepr (τ₁ :*: τ₂)
 
 instance Show (TypeRepr τ) where
   showsPrec _ IntRepr  = showString "IntT"
@@ -71,6 +74,9 @@ instance Show (TypeRepr τ) where
   showsPrec d (ArrowRepr x y) =
      showParen (d > 5) $
        showsPrec 6 x . showString " :-> " . showsPrec 5 y
+  showsPrec d (PairRepr x y) =
+     showParen (d > 6) $
+       showsPrec 7 x . showString " :*: " . showsPrec 6 y
 
 instance ShowF TypeRepr
 
@@ -78,11 +84,17 @@ instance KnownRepr TypeRepr IntT where knownRepr = IntRepr
 instance KnownRepr TypeRepr BoolT where knownRepr = BoolRepr
 instance (KnownRepr TypeRepr τ₁, KnownRepr TypeRepr τ₂) => KnownRepr TypeRepr (τ₁ :-> τ₂) where
   knownRepr = ArrowRepr knownRepr knownRepr
+instance (KnownRepr TypeRepr τ₁, KnownRepr TypeRepr τ₂) => KnownRepr TypeRepr (τ₁ :*: τ₂) where
+  knownRepr = PairRepr knownRepr knownRepr
 
 instance TestEquality TypeRepr where
   testEquality BoolRepr BoolRepr = return Refl
   testEquality IntRepr  IntRepr  = return Refl
   testEquality (ArrowRepr x₁ x₂) (ArrowRepr y₁ y₂) =
+    do Refl <- testEquality x₁ y₁
+       Refl <- testEquality x₂ y₂
+       return Refl
+  testEquality (PairRepr x₁ x₂) (PairRepr y₁ y₂) =
     do Refl <- testEquality x₁ y₁
        Refl <- testEquality x₂ y₂
        return Refl
@@ -101,9 +113,13 @@ data Term (γ :: Ctx Type) (τ :: Type) :: * where
   TmNeg  :: Term γ IntT -> Term γ IntT
   TmBool :: Bool -> Term γ BoolT
   TmIte  :: Term γ BoolT -> Term γ τ -> Term γ τ -> Term γ τ
+  TmPair :: Term γ τ₁ -> Term γ τ₂ -> Term γ (τ₁ :*: τ₂)
+  TmFst  :: Term γ (τ₁ :*: τ₂) -> Term γ τ₁
+  TmSnd  :: Term γ (τ₁ :*: τ₂) -> Term γ τ₂
   TmApp  :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
   TmAbs  :: String -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
   TmFix  :: String -> TypeRepr τ  -> Term (γ ::> τ)  τ  -> Term γ τ
+
 
 infixl 5 :@
 
@@ -153,6 +169,12 @@ printTerm pvar prec tm = case tm of
                  showString "if " . printTerm pvar 0 c .
                  showString " then " . printTerm pvar 4 x .
                  showString " else " . printTerm pvar 4 y
+  TmPair x y -> showParen True $
+                  printTerm pvar 0 x .
+                  showString ", " .
+                  printTerm pvar 0 y
+  TmFst x -> showParen (prec > 10) $ showString "fst " . printTerm pvar 11 x
+  TmSnd x -> showParen (prec > 10) $ showString "snd " . printTerm pvar 11 x
   TmApp x y -> showParen (prec > 10) (printTerm pvar 10 x) . showString " " . printTerm pvar 11 y
   TmFix nm tp x ->
     let nm' = if Prelude.null nm then "v" else nm
@@ -188,6 +210,11 @@ computeType env tm = case tm of
   TmAdd _ _ -> IntRepr
   TmNeg _ -> IntRepr
   TmIte _ x _ -> computeType env x
+  TmPair x y -> PairRepr (computeType env x) (computeType env y)
+  TmFst x ->
+    case computeType env x of PairRepr τ _ -> τ
+  TmSnd x ->
+    case computeType env x of PairRepr _ τ -> τ
   TmApp x y ->
     case computeType env x of ArrowRepr _ τ -> τ
   TmAbs _ τ₁ x ->
@@ -206,12 +233,15 @@ data Value (f :: Type -> *) (τ :: Type) :: * where
   VInt   :: Int -> Value f IntT
   VBool  :: Bool -> Value f BoolT
   VAbs   :: Assignment f γ -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Value f (τ₁ :-> τ₂)
+  VPair  :: f τ₁ -> f τ₂ -> Value f (τ₁ :*: τ₂)
 
 instance ShowFC Value where
   showsPrecFC _sh _prec (VInt n) = shows n
   showsPrecFC _sh _prec (VBool b) = shows b
   showsPrecFC sh prec (VAbs env τ tm) =
      printTerm (fmapFC (\x -> Const (\p -> sh p x)) env) prec (TmAbs [] τ tm)
+  showsPrecFC sh prec (VPair _x _y) = showString "<pair>"
+
 instance ShowF f => ShowF (Value f)
 instance ShowF f => Show (Value f τ) where
   show = showFC showF
