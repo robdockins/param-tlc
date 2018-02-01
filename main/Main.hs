@@ -5,6 +5,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Main where
@@ -36,7 +37,7 @@ testTerm =
            T.TmInt 121
 
 
-fib :: Term EmptyCtx (IntT :-> IntT)
+fib :: Term EmptyCtx EmptyCtx (IntT :-> IntT)
 fib = μ "fib" $ λ "x" $
         TmIte (Var @1 :<= 1)
               (Var @1)
@@ -45,19 +46,19 @@ fib = μ "fib" $ λ "x" $
                (Var @0 :@ (Var @1 + (-2)))
               )
 
-fib' :: Term EmptyCtx (IntT :-> IntT)
+fib' :: Term EmptyCtx EmptyCtx (IntT :-> IntT)
 fib' = λ "x" (TmIte (Var @0 :<= 1)
                 (Var @0)
                 (TmWeak fibaux :@ Var @0 + (-2) :@ 1 :@ 1))
 
  where
- fibaux :: Term EmptyCtx (IntT :-> IntT :-> IntT :-> IntT)
+ fibaux :: Term EmptyCtx EmptyCtx (IntT :-> IntT :-> IntT :-> IntT)
  fibaux  = μ "fibaux" $ λ "n" $ λ "x" $ λ "y" $
             TmIte (Var @1 :<= 0)
                   (Var @3)
                   (Var @0 :@ Var @1 + (-1) :@ Var @3 :@ (Var @2) + (Var @3))
 
-display :: Term EmptyCtx τ -> IO ()
+display :: Term EmptyCtx EmptyCtx τ -> IO ()
 display tm =
   do putStrLn "Original:"
      print tm
@@ -84,11 +85,11 @@ readMain tms =
      display t
 
 
-applyTerms :: [T.TCResult γ] -> IO (T.TCResult γ)
+applyTerms :: [T.TCResult EmptyCtx γ] -> IO (T.TCResult EmptyCtx γ)
 applyTerms [] = fail "Empty list of terms!"
 applyTerms (T.TCResult tp f : xs) = go tp f xs
  where
- go :: TypeRepr τ -> Term γ τ -> [T.TCResult γ] -> IO (T.TCResult γ)
+ go :: TypeRepr EmptyCtx Star τ -> Term EmptyCtx γ τ -> [T.TCResult EmptyCtx γ] -> IO (T.TCResult EmptyCtx γ)
  go tp tm [] = return $ T.TCResult tp tm
  go (ArrowRepr τ₁ τ₂) f (T.TCResult σ x : ts)
    | Just Refl <- testEquality τ₁ σ
@@ -97,7 +98,7 @@ applyTerms (T.TCResult tp f : xs) = go tp f xs
    = do putStrLn $ unlines [ "Cannot apply term of type:", show tp, "to a term of type:", show xtp]
         exitFailure
 
-checkTerms :: [String] -> IO [T.TCResult EmptyCtx]
+checkTerms :: [String] -> IO [T.TCResult EmptyCtx EmptyCtx]
 checkTerms [] = return []
 checkTerms (t:ts) =
   do case runExcept . T.checkTerm . read $ t of

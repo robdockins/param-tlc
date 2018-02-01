@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -50,15 +51,15 @@ import TLC.AST
 
 -- | A @Subst@ assigns to each free variable in @γ₂@
 --   a term with free variables in @γ₁@.
-type Subst γ₁ γ₂  = Assignment (Term γ₁) γ₂
+type Subst δ (γ₁ :: Ctx (Type δ Star)) (γ₂ :: Ctx (Type δ Star))  = Assignment (Term δ γ₁) γ₂
 
 -- | This is a utility operation that extends a
 --   substitution with a fresh variable that will
 --   be unchanged.
 extend_sub ::
   Size γ₁ ->
-  Subst γ₁ γ₂ ->
-  Subst (γ₁ ::> τ) (γ₂ ::> τ)
+  Subst δ γ₁ γ₂ ->
+  Subst δ (γ₁ ::> τ) (γ₂ ::> τ)
 extend_sub sz sub =
   fmapFC TmWeak sub :> TmVar (nextIndex sz)
 
@@ -66,8 +67,8 @@ extend_sub sz sub =
 --   all the free variables in the term.
 subst ::
   Size γ₁ ->
-  Subst γ₁ γ₂ ->
-  Term γ₂ τ -> Term γ₁ τ
+  Subst δ γ₁ γ₂ ->
+  Term δ γ₂ τ -> Term δ γ₁ τ
 subst sz sub tm = case tm of
   TmVar i     -> sub!i
   TmWeak x    -> subst sz (Ctx.init sub) x
@@ -85,13 +86,13 @@ subst sz sub tm = case tm of
 --   variables unchanged.
 singleSubst ::
   Size γ ->
-  Term γ τ {-^ The term to substitute -} ->
-  Term (γ ::> τ) τ' {-^ The term being substituted into -} ->
-  Term γ τ'
+  Term δ γ τ {-^ The term to substitute -} ->
+  Term δ (γ ::> τ) τ' {-^ The term being substituted into -} ->
+  Term δ γ τ'
 singleSubst sz tm body = subst sz (generate sz TmVar :> tm) body
 
 -- | Perform full-β normalization on a λ term.
-substEval :: Size γ -> Term γ τ -> Term γ τ
+substEval :: Size γ -> Term δ γ τ -> Term δ γ τ
 substEval sz tm = case tm of
   TmVar i  -> TmVar i
   TmWeak x -> TmWeak (substEval (decSize sz) x)
@@ -139,7 +140,7 @@ instance Show (CBV τ) where
 --   given term to a @Value@.
 cbvEval ::
    Assignment CBV γ ->
-   Term γ τ ->
+   Term EmptyCtx γ τ ->
    Value CBV τ
 cbvEval env tm = case tm of
    TmVar i  -> unCBV (env!i)
@@ -205,7 +206,7 @@ force (Thunk ref) =
 --   in @γ@, compute the call-by-need evalaution of the given term.
 cbnEval ::
    Assignment (Thunk s) γ ->
-   Term γ τ ->
+   Term EmptyCtx γ τ ->
    ST s (CBN s τ)
 cbnEval env tm = case tm of
    TmVar i ->

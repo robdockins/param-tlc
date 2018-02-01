@@ -13,6 +13,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -72,7 +73,7 @@ data Type where
 
 typeToRepr ::
   Type ->
-  Some AST.TypeRepr
+  Some (AST.TypeRepr EmptyCtx AST.Star)
 typeToRepr IntT = Some AST.IntRepr
 typeToRepr BoolT = Some AST.BoolRepr
 typeToRepr (ArrowT x y) =
@@ -82,8 +83,8 @@ typeToRepr (ArrowT x y) =
 -- | The result of a typechecking operation in the context
 --   of free variable context @γ@ is a type repr and
 --   a term of that type.
-data TCResult (γ :: Ctx AST.Type) where
-  TCResult :: AST.TypeRepr τ -> AST.Term γ τ -> TCResult γ
+data TCResult δ (γ :: Ctx (AST.Type δ AST.Star)) where
+  TCResult :: AST.TypeRepr δ AST.Star τ -> AST.Term δ γ τ -> TCResult δ γ
 
 -- | Given an untyped list of free variable names and a
 --   strongly-typed free variable context, check that the
@@ -102,9 +103,9 @@ data TCResult (γ :: Ctx AST.Type) where
 
 verifyTyping ::
    [String] {-^ Scope information about the free variable names in stack order (nearest enclosing binder nearset to the front of the list -} ->
-   Assignment AST.TypeRepr γ {-^ Typed scope information corresponding to the above -} ->
+   Assignment (AST.TypeRepr EmptyCtx AST.Star) γ {-^ Typed scope information corresponding to the above -} ->
    Term {-^ A term to check -} ->
-   Except String (TCResult γ)
+   Except String (TCResult EmptyCtx γ)
 verifyTyping scope env tm = case tm of
    TmVar nm ->
      case elemIndex nm scope of
@@ -160,5 +161,5 @@ verifyTyping scope env tm = case tm of
 -- | Typecheck a term in the empty typing context.
 checkTerm ::
   Term ->
-  Except String (TCResult EmptyCtx)
+  Except String (TCResult EmptyCtx EmptyCtx)
 checkTerm = verifyTyping [] Empty

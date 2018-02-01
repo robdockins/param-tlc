@@ -11,7 +11,10 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Werror #-}
@@ -40,50 +43,156 @@
 
 module TLC.AST where
 
+import qualified Data.Kind as Haskell
+import           Data.Type.Equality
+
 import Data.Functor.Const
 
 import Data.Parameterized.Classes
 import Data.Parameterized.Context as Ctx
 import Data.Parameterized.TraversableFC
 
+data Kind where
+  (:=>) :: Kind -> Kind -> Kind
+  Star  :: Kind
+
+infixr 5 :=>
+
+data KindRepr :: Kind -> Haskell.Type where
+  KArrowRepr :: KindRepr k₁ -> KindRepr k₂ -> KindRepr (k₁ :=> k₂)
+  StarRepr   :: KindRepr Star
+
+instance Show (KindRepr k) where
+  showsPrec _ StarRepr = showString "*"
+  showsPrec d (KArrowRepr k₁ k₂) =
+    showParen (d > 5) $
+      showsPrec 6 k₁ . showString " :=> " . showsPrec 5 k₂
+instance ShowF KindRepr
+
+instance KnownRepr KindRepr Star where
+  knownRepr = StarRepr
+instance (KnownRepr KindRepr k₁, KnownRepr KindRepr k₂) => KnownRepr KindRepr (k₁ :=> k₂) where
+  knownRepr = KArrowRepr knownRepr knownRepr
+instance TestEquality KindRepr where
+  testEquality StarRepr StarRepr = return Refl
+  testEquality (KArrowRepr x₁ x₂) (KArrowRepr y₁ y₂) =
+    do Refl <- testEquality x₁ y₁
+       Refl <- testEquality x₂ y₂
+       return Refl
+  testEquality _ _ = Nothing
+
 -- | This data declaration is used as a 'DataKind'.
 --   It is promoted to a kind, so that the constructors
 --   can be used as indices to GADT.
-data Type where
-  (:->) :: Type -> Type -> Type
-  BoolT :: Type
-  IntT  :: Type
+data Type :: Ctx Kind -> Kind -> Haskell.Type where
+  VarT    :: Type (δ ::> k) k
+  WeakT   :: Type δ k -> Type (δ ::> k') k
+  AllT    :: Type (δ ::> k') k -> Type δ k
+  ArrowT  :: Type δ (Star :=> Star :=> Star)
+  BoolT   :: Type δ Star
+  IntT    :: Type δ Star
+  (:@@)   :: Type δ (k₁ :=> k₂) -> Type δ k₁ -> Type δ k₂
 
+infixl 4 :@@
 infixr 5 :->
+
+type (:->) x y = ArrowT :@@ x :@@ y
+
+type family WkCtx (γ :: Ctx (Type δ k)) :: Ctx (Type (δ ::> k') k) where
+  WkCtx EmptyCtx  = EmptyCtx
+  WkCtx (γ ::> τ) = WkCtx γ ::> WeakT τ
+
+
+data TySubst (δ :: Ctx Kind) (δ' :: Ctx Kind) where
+  TySubstId   :: TySubst δ δ'
+  TySubstLift :: TySubst δ δ' -> TySubst (δ ::> k) (δ' ::> k)
+  TySubstCons :: TySubst δ δ' -> Type δ' k -> TySubst (δ ::> k) δ'
+
+
+type family SubstTAssign (assn :: TySubst δ δ') (t :: Type δ k) :: Type δ' k where
+  SubstTAssign TySubstId x = x
+
+  SubstTAssign (TySubstLift sub)    VarT = VarT
+  SubstTAssign (TySubstCons sub t)  VarT = t
+
+  SubstTAssign (TySubstLift sub)    (WeakT x) = WeakT (SubstTAssign sub x)
+  SubstTAssign (TySubstCons sub t)  (WeakT x) = SubstTAssign sub x
+
+  SubstTAssign sub (AllT x)  = AllT (SubstTAssign (TySubstLift sub) x)
+  SubstTAssign sub (x :@@ y) = SubstTAssign sub x :@@ SubstTAssign sub y
+  SubstTAssign sub ArrowT    = ArrowT
+  SubstTAssign sub BoolT     = BoolT
+  SubstTAssign sub IntT      = IntT
+
+type SubstT (f :: Type (δ ::> k') k) (t :: Type δ k') =
+  SubstTAssign (TySubstCons TySubstId t) f
+
+type family SubstTCtx (ctx :: Ctx (Type (δ ::> k') k)) (t :: Type δ k') :: Ctx (Type δ k) where
+  SubstTCtx EmptyCtx t = EmptyCtx
+  SubstTCtx (ctx ::> f) t = SubstTCtx ctx t ::> SubstT f t
 
 -- | The 'TypeRepr' family is a run-time representation of the
 --   data kind 'Type' it allows us to do runtime tests and computation
 --   on 'Type'.  The shape of the data constructors exactly mirror
 --   the shape of the data kind 'Type'.
-data TypeRepr :: Type -> * where
-  ArrowRepr :: TypeRepr τ₁ -> TypeRepr τ₂ -> TypeRepr (τ₁ :-> τ₂)
-  BoolRepr  :: TypeRepr BoolT
-  IntRepr   :: TypeRepr IntT
+data TypeRepr (δ :: Ctx Kind) (k :: Kind) :: Type δ k -> Haskell.Type where
+  VarTRepr  :: TypeRepr (γ ::> k) k VarT
+  WeakTRepr :: TypeRepr δ k t -> TypeRepr (δ ::> k') k (WeakT t)
+  AllTRepr  :: KindRepr k' -> TypeRepr (δ ::> k') k t -> TypeRepr δ k (AllT t)
+  ArrRepr   :: TypeRepr δ (Star :=> Star :=> Star) ArrowT
+  BoolRepr  :: TypeRepr δ Star BoolT
+  IntRepr   :: TypeRepr δ Star IntT
+  AppRepr   :: forall δ k₁ k₂ t₁ t₂.
+                  KindRepr k₁ ->
+                  TypeRepr δ (k₁ :=> k₂) t₁ ->
+                  TypeRepr δ k₁ t₂ ->
+                  TypeRepr δ k₂ (t₁ :@@ t₂)
 
-instance Show (TypeRepr τ) where
-  showsPrec _ IntRepr  = showString "IntT"
-  showsPrec _ BoolRepr = showString "BoolT"
+pattern ArrowRepr ::
+  () => (k ~ Star, t ~~ (t₁ :-> t₂)) =>
+  TypeRepr δ Star t₁ -> TypeRepr δ Star t₂ -> TypeRepr δ k t
+pattern ArrowRepr t₁ t₂ = AppRepr StarRepr (AppRepr StarRepr ArrRepr t₁) t₂
+
+
+instance Show (TypeRepr δ k τ) where
   showsPrec d (ArrowRepr x y) =
      showParen (d > 5) $
        showsPrec 6 x . showString " :-> " . showsPrec 5 y
 
-instance ShowF TypeRepr
+  showsPrec _ VarTRepr = showString "VAR"
+  showsPrec d (WeakTRepr t) =
+     showParen (d > 10) $
+       showString "W " . showsPrec 11 t
+  showsPrec d (AllTRepr k t) =
+     showParen (d > 0) $
+       showString "∀" . showsPrec 0 k . showString ". " .
+       showsPrec 0 t
+  showsPrec _ IntRepr  = showString "IntT"
+  showsPrec _ BoolRepr = showString "BoolT"
+  showsPrec _ ArrRepr  = showString "(:->)"
+  showsPrec d (AppRepr _ x y) =
+    showParen (d > 4) $
+      showsPrec 4 x . showString " :@@ " . showsPrec 5 y
 
-instance KnownRepr TypeRepr IntT where knownRepr = IntRepr
-instance KnownRepr TypeRepr BoolT where knownRepr = BoolRepr
-instance (KnownRepr TypeRepr τ₁, KnownRepr TypeRepr τ₂) => KnownRepr TypeRepr (τ₁ :-> τ₂) where
-  knownRepr = ArrowRepr knownRepr knownRepr
 
-instance TestEquality TypeRepr where
+instance ShowF (TypeRepr δ k)
+
+instance KnownRepr (TypeRepr δ Star) IntT where knownRepr = IntRepr
+instance KnownRepr (TypeRepr δ Star) BoolT where knownRepr = BoolRepr
+instance KnownRepr (TypeRepr δ (Star :=> Star :=> Star)) ArrowT where knownRepr = ArrRepr
+instance (KnownRepr KindRepr k₁,
+          KnownRepr (TypeRepr δ (k₁ :=> k₂)) t₁,
+          KnownRepr (TypeRepr δ k₁) t₂) =>
+         KnownRepr (TypeRepr δ k₂) (t₁ :@@ t₂) where
+  knownRepr = AppRepr knownRepr knownRepr knownRepr
+
+instance TestEquality (TypeRepr δ k) where
   testEquality BoolRepr BoolRepr = return Refl
   testEquality IntRepr  IntRepr  = return Refl
-  testEquality (ArrowRepr x₁ x₂) (ArrowRepr y₁ y₂) =
-    do Refl <- testEquality x₁ y₁
+  testEquality ArrRepr  ArrRepr  = return Refl
+  testEquality (AppRepr kx x₁ x₂) (AppRepr ky y₁ y₂) =
+    do Refl <- testEquality kx ky
+       Refl <- testEquality x₁ y₁
        Refl <- testEquality x₂ y₂
        return Refl
   testEquality _ _ = Nothing
@@ -92,22 +201,25 @@ instance TestEquality TypeRepr where
 --   a representation of "open" terms.  The 'Term' type has two parameters.
 --   The first 'γ', is a context that fixes the types of the free variables
 --   occuring in the term.  The second 'τ', is the result type of the term.
-data Term (γ :: Ctx Type) (τ :: Type) :: * where
-  TmVar  :: Index γ τ -> Term γ τ
-  TmWeak :: Term γ τ -> Term (γ ::> τ') τ
-  TmInt  :: Int -> Term γ IntT
-  TmLe   :: Term γ IntT -> Term γ IntT -> Term γ BoolT
-  TmAdd  :: Term γ IntT -> Term γ IntT -> Term γ IntT
-  TmNeg  :: Term γ IntT -> Term γ IntT
-  TmBool :: Bool -> Term γ BoolT
-  TmIte  :: Term γ BoolT -> Term γ τ -> Term γ τ -> Term γ τ
-  TmApp  :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
-  TmAbs  :: String -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
-  TmFix  :: String -> TypeRepr τ  -> Term (γ ::> τ)  τ  -> Term γ τ
+data Term (δ :: Ctx Kind) (γ :: Ctx (Type δ Star)) (τ :: Type δ Star) :: Haskell.Type where
+  TmVar  :: Index γ τ -> Term δ γ τ
+  TmWeak :: Term δ γ τ -> Term δ (γ ::> τ') τ
+  TmInt  :: Int -> Term δ γ IntT
+  TmLe   :: Term δ γ IntT -> Term δ γ IntT -> Term δ γ BoolT
+  TmAdd  :: Term δ γ IntT -> Term δ γ IntT -> Term δ γ IntT
+  TmNeg  :: Term δ γ IntT -> Term δ γ IntT
+  TmBool :: Bool -> Term δ γ BoolT
+  TmIte  :: Term δ γ BoolT -> Term δ γ τ -> Term δ γ τ -> Term δ γ τ
+  TmApp  :: Term δ γ (τ₁ :-> τ₂) -> Term δ γ τ₁ -> Term δ γ τ₂
+  TmAbs  :: String -> TypeRepr δ Star τ₁ -> Term δ (γ ::> τ₁) τ₂ -> Term δ γ (τ₁ :-> τ₂)
+  TmFix  :: String -> TypeRepr δ Star τ  -> Term δ (γ ::> τ)  τ  -> Term δ γ τ
+
+--  TmTAbs :: KindRepr k -> Term (δ ::> k) (WkCtx γ) τ -> Term δ γ (AllT τ)
+--  TmTApp :: Term δ γ (AllT f) -> TypeRepr δ k t -> Term δ γ (SubstT f t)
 
 infixl 5 :@
 
-instance Num (Term γ IntT) where
+instance Num (Term δ γ IntT) where
   fromInteger n = TmInt (fromInteger n)
   x + y = TmAdd x y
   negate (TmInt x) = TmInt (negate x)
@@ -116,30 +228,30 @@ instance Num (Term γ IntT) where
   abs = error "Abs not defined"
   signum = error "signum not defined"
 
-pattern (:@) :: Term γ (τ₁ :-> τ₂) -> Term γ τ₁ -> Term γ τ₂
+pattern (:@) :: Term δ γ (τ₁ :-> τ₂) -> Term δ γ τ₁ -> Term δ γ τ₂
 pattern x :@ y = TmApp x y
 
 -- | A helper function for constructing lambda terms
-λ :: KnownRepr TypeRepr τ₁ => String -> Term (γ ::> τ₁) τ₂ -> Term γ (τ₁ :-> τ₂)
+λ :: KnownRepr (TypeRepr δ Star) τ₁ => String -> Term δ (γ ::> τ₁) τ₂ -> Term δ γ (τ₁ :-> τ₂)
 λ nm x = TmAbs nm knownRepr x
 
 -- | A helper function for constructing fixpoint terms
-μ :: KnownRepr TypeRepr τ => String -> Term (γ ::> τ) τ -> Term γ τ
+μ :: KnownRepr (TypeRepr δ Star) τ => String -> Term δ (γ ::> τ) τ -> Term δ γ τ
 μ nm x = TmFix nm knownRepr x
 
 -- | A pattern for variables.  This is intended to be used with explicit
 --   type applications, e.g. @Var \@2@.
-pattern Var :: forall n γ τ. Idx n γ τ => Term γ τ
+pattern Var :: forall n δ γ τ. Idx n γ τ => Term δ γ τ
 pattern Var <- TmVar (testEquality (natIndex @n) -> Just Refl)
  where Var = TmVar (natIndex @n)
 
-pattern (:<=) :: Term γ IntT -> Term γ IntT -> Term γ BoolT
+pattern (:<=) :: Term δ γ IntT -> Term δ γ IntT -> Term δ γ BoolT
 pattern x :<= y = TmLe x y
 
 -- | A simple pretty printer for terms.
 printTerm :: Assignment (Const (Int -> ShowS)) γ
           -> Int
-          -> Term γ τ
+          -> Term δ γ τ
           -> ShowS
 printTerm pvar prec tm = case tm of
   TmVar i -> getConst (pvar!i) prec
@@ -169,16 +281,23 @@ printTerm pvar prec tm = case tm of
       showString " : " . showsPrec 0 tp .
       showString ". " . printTerm (pvar :> Const vnm) 0 x
 
-instance KnownContext γ => Show (Term γ τ) where
+  -- TmTAbs k x ->
+  --   showParen (prec > 0) $
+  --     showString "Λ " .
+  --     showsPrec 0 k .
+  --     showString ". " .
+  --     printTerm undefined {-FIXME! pvar -} 0 x
+
+instance KnownContext γ => Show (Term δ γ τ) where
   showsPrec = printTerm (generate knownSize (\i -> Const (\_ -> shows (indexVal i))))
 
 
 -- | Given an assignment of (run-time) types for the free variables, compute the
 --   (run-time) type of a term.
 computeType ::
-  Assignment TypeRepr γ ->
-  Term γ τ ->
-  TypeRepr τ
+  Assignment (TypeRepr δ Star) γ ->
+  Term δ γ τ ->
+  TypeRepr δ Star τ
 computeType env tm = case tm of
   TmVar i -> env!i
   TmWeak x -> computeType (Ctx.init env) x
@@ -189,10 +308,12 @@ computeType env tm = case tm of
   TmNeg _ -> IntRepr
   TmIte _ x _ -> computeType env x
   TmApp x y ->
-    case computeType env x of ArrowRepr _ τ -> τ
+    case computeType env x of AppRepr StarRepr (AppRepr StarRepr ArrRepr _) τ -> τ
   TmAbs _ τ₁ x ->
-    let τ₂ = computeType (env :> τ₁) x in ArrowRepr τ₁ τ₂
+    let τ₂ = computeType (env :> τ₁) x in AppRepr StarRepr (AppRepr StarRepr ArrRepr τ₁) τ₂
   TmFix _ τ _ -> τ
+  -- TmTAbs k x -> AllTRepr k (computeType undefined {-FIXME!-} x)
+
 
 -- | A generic representation of values.  A value for this calculus
 --   is either a basic value of one of the base types (Int or Bool)
@@ -202,10 +323,10 @@ computeType env tm = case tm of
 --   The sorts of values contained in the
 --   closure are controlled by the type parameter @f@; this varies depending
 --   on the evaluation strategy.
-data Value (f :: Type -> *) (τ :: Type) :: * where
+data Value (f :: Type EmptyCtx Star -> Haskell.Type) (τ :: Type EmptyCtx Star) :: Haskell.Type where
   VInt   :: Int -> Value f IntT
   VBool  :: Bool -> Value f BoolT
-  VAbs   :: Assignment f γ -> TypeRepr τ₁ -> Term (γ ::> τ₁) τ₂ -> Value f (τ₁ :-> τ₂)
+  VAbs   :: Assignment f γ -> TypeRepr EmptyCtx Star τ₁ -> Term EmptyCtx (γ ::> τ₁) τ₂ -> Value f (τ₁ :-> τ₂)
 
 instance ShowFC Value where
   showsPrecFC _sh _prec (VInt n) = shows n
