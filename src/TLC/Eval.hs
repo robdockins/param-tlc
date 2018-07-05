@@ -15,6 +15,22 @@
 {-# OPTIONS -Wincomplete-patterns #-}
 {-# OPTIONS -Wunused-imports #-}
 
+----------------------------------------------------------------
+-- |
+-- Module               : TLC.Eval
+-- Description          : Evaluation strategies for STLC
+-- Copyright            : (c) Galois, Inc. 2017
+-- Maintainer           : Robert Dockins <rdockins@galois.com>
+--
+-- This module defines several different evaluation strategies
+-- for the STLC.  Each takes advantage of the GADT indices
+-- on the term language to ensure that evaluation is well typed.
+--
+-- Sometimes this requires a very particular way to set up the
+-- evaluation definitions.  In particular, the substituion algorithm
+-- is most easily expressed using "multi-substitution", which may
+-- be less famlilar than single variable substituion.
+-------------------------------------------------------------------
 module TLC.Eval where
 
 import Control.Monad.Fix
@@ -26,23 +42,6 @@ import Data.Parameterized.Context as Ctx hiding ((++))
 import Data.Parameterized.TraversableFC
 
 import TLC.AST
-
-----------------------------------------------------------------
--- |
--- Module               : TLC.Eval
--- Copyright            : (c) Galois, Inc.  2017
--- Maintainter          : Robert Dockins <rdockins@galois.com>
--- Synopsis             : Evaluation strategies for STLC
---
--- This module defines several different evaluation strategies
--- for the STLC.  Each takes advantage of the GADT indices
--- on the term language to ensure that evaluation is well typed.
---
--- Sometimes this requires a very particular way to set up the
--- evaluation definitions.  In particular, the substituion algorithm
--- is most easily expressed using "mutli-substitution", which may
--- be less famlilar than single variable substituion.
--------------------------------------------------------------------
 
 -------------------------------------------------------------------
 -- Substitution and full-β evaluation
@@ -88,8 +87,8 @@ subst sz sub tm = case tm of
 --   variables unchanged.
 singleSubst ::
   Size γ ->
-  Term γ τ {-^ The term to substitute -} ->
-  Term (γ ::> τ) τ' {-^ The term being substituted into -} ->
+  Term γ τ          {- ^ The term to substitute -} ->
+  Term (γ ::> τ) τ' {- ^ The term being substituted into -} ->
   Term γ τ'
 singleSubst sz tm body = subst sz (generate sz TmVar :> tm) body
 
