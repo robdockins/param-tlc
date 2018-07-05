@@ -19,23 +19,15 @@
 {-# OPTIONS -Wunused-imports #-}
 ----------------------------------------------------------------
 -- |
--- Module               : TLC.AST
--- Copyright            : (c) Galois, Inc.  2017
+-- Module               : TLC.SimpleTerm
+-- Description          : Strongly-typed abstract syntax
+--                         a simple term language
+-- Copyright            : (c) Galois, Inc.  2018
 -- Maintainter          : Robert Dockins <rdockins@galois.com>
--- Synopsis             : Strongly-typed sbstract syntax for a λ-calculus
 --
--- This module defines a strongly-typed abstract syntax for a typed
--- λ-calculus, using a host of fancy GHC extensions (in particular
--- Generalized Algebraic Data Types, GADTs) to directly embed the
--- simple type discipline of λ-terms directly into GHC's type system.
---
--- The major purpose of this module is to demonstrate the techniques
--- required to successfully work in this atmosphere of rich types.
--- Special data structures, generalizations of existing programming
--- patterns and programming techniques are often required; many of
--- these useful patterns and utilites have been captuered in the
--- 'parameterized-utils' package.  This module demonstrates the
--- use of quite a few of these.
+-- This module defines a simple first-order term syntax operating
+-- on booleans an integers to introduce the main ideas of
+-- GADTs, data kinds, type representatives, and typed evaluation.
 -------------------------------------------------------------------
 
 module TLC.SimpleTerm where
@@ -45,9 +37,7 @@ import Data.Parameterized.Classes
 -- | This data declaration is used as a 'DataKind'.
 --   It is promoted to a kind, so that the constructors
 --   can be used as indices to GADT.
-data Type where
-  BoolT :: Type
-  IntT  :: Type
+data Type = BoolT | IntT
 
 -- | The 'TypeRepr' family is a run-time representation of the
 --   data kind 'Type' it allows us to do runtime tests and computation
@@ -82,16 +72,6 @@ data Term (τ :: Type) :: * where
   TmNeg  :: Term IntT -> Term IntT
   TmBool :: Bool -> Term BoolT
   TmIte  :: forall α. Term BoolT -> Term α -> Term α -> Term α
-
-instance Num (Term IntT) where
-  fromInteger n = TmInt (fromInteger n)
-  x + y = TmAdd x y
-  negate (TmInt x) = TmInt (negate x)
-  negate x = TmNeg x
-  x * y = error "multiplication not defined"
-  abs = error "Abs not defined"
-  signum = error "signum not defined"
-
 
 -- | A simple pretty printer for terms.
 printTerm :: Int

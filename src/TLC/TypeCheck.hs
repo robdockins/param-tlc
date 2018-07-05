@@ -23,16 +23,15 @@
 ----------------------------------------------------------------
 -- |
 -- Module               : TLC.TypeCheck
+-- Description          : Typechecking to produce strongly-typed STLC
 -- Copyright            : (c) Galois, Inc.  2017
--- Maintainter          : Robert Dockins <rdockins@galois.com>
--- Synopsis             : Typechecking to produce strongly-typed STLC
+-- Maintainer           : Robert Dockins <rdockins@galois.com>
 --
 -- This module defines an untyped AST for the STLC and demonstrates
 -- how to use runtime type representations to do computations on
 -- types sufficent to convince GHC that we can produce a strongly-typed
 -- term from untyped input data.
 -------------------------------------------------------------------
-
 module TLC.TypeCheck where
 
 import Prelude
@@ -70,9 +69,9 @@ data Type where
   ArrowT :: Type -> Type -> Type
  deriving (Show, Read, Eq, Ord)
 
-typeToRepr ::
-  Type ->
-  Some AST.TypeRepr
+-- | Translate the unannotated 'Type' terms from this module into
+--   the corresponding 'AST.TypeRepr' values from the "TLC.AST" module.
+typeToRepr :: Type -> Some AST.TypeRepr
 typeToRepr IntT = Some AST.IntRepr
 typeToRepr BoolT = Some AST.BoolRepr
 typeToRepr (ArrowT x y) =
@@ -80,7 +79,7 @@ typeToRepr (ArrowT x y) =
     (Some x', Some y') -> Some (AST.ArrowRepr x' y')
 
 -- | The result of a typechecking operation in the context
---   of free variable context @γ@ is a type repr and
+--   of free variable context @γ@ is a 'AST.TypeRepr' and
 --   a term of that type.
 data TCResult (γ :: Ctx AST.Type) where
   TCResult :: AST.TypeRepr τ -> AST.Term γ τ -> TCResult γ
@@ -94,14 +93,14 @@ data TCResult (γ :: Ctx AST.Type) where
 --   on types into the GHC type system.  Pattern matching on @Refl@
 --   brings type-level equalities into scope in GHC's type system,
 --   and allows the construction of strongly-typed ASTs.  Using
---   the @Except@ monad and monad pattern bindinds, we can have
+--   the @Except@ monad and monad pattern bindings, we can have
 --   GHC automatically generate error messages if an expected
 --   type equality doesn't hold.  This isn't really recommended for
---   production code, as the generated messages are not very user-friendly,
+--   production code as the generated messages are not very user-friendly,
 --   but is convenient and fairly readable for demonstration purposes here.
 
 verifyTyping ::
-   [String] {-^ Scope information about the free variable names in stack order (nearest enclosing binder nearset to the front of the list -} ->
+   [String] {-^ Scope information about the free variable names in stack order (nearest enclosing binder nearest to the front of the list) -} ->
    Assignment AST.TypeRepr γ {-^ Typed scope information corresponding to the above -} ->
    Term {-^ A term to check -} ->
    Except String (TCResult γ)
@@ -126,8 +125,7 @@ verifyTyping scope env tm = case tm of
         TCResult AST.IntRepr y' <- verifyTyping scope env y
         return $ TCResult AST.IntRepr (AST.TmAdd x' y')
    TmNeg x ->
-     do TCResult xtp x' <- verifyTyping scope env x
-        Just Refl <- return $ testEquality xtp AST.IntRepr
+     do TCResult AST.IntRepr x' <- verifyTyping scope env x
         return $ TCResult AST.IntRepr (AST.TmNeg x')
    TmIte c x y ->
      do TCResult AST.BoolRepr c' <- verifyTyping scope env c
@@ -158,7 +156,5 @@ verifyTyping scope env tm = case tm of
                ]
 
 -- | Typecheck a term in the empty typing context.
-checkTerm ::
-  Term ->
-  Except String (TCResult EmptyCtx)
+checkTerm :: Term -> Except String (TCResult EmptyCtx)
 checkTerm = verifyTyping [] Empty

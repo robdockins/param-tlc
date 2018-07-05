@@ -20,9 +20,9 @@
 ----------------------------------------------------------------
 -- |
 -- Module               : TLC.AST
+-- Description          : Strongly-typed abstract syntax for a λ-calculus
 -- Copyright            : (c) Galois, Inc.  2017
--- Maintainter          : Robert Dockins <rdockins@galois.com>
--- Synopsis             : Strongly-typed sbstract syntax for a λ-calculus
+-- Maintainer           : Robert Dockins <rdockins@galois.com>
 --
 -- This module defines a strongly-typed abstract syntax for a typed
 -- λ-calculus, using a host of fancy GHC extensions (in particular
@@ -37,7 +37,6 @@
 -- 'parameterized-utils' package.  This module demonstrates the
 -- use of quite a few of these.
 -------------------------------------------------------------------
-
 module TLC.AST where
 
 import Data.Functor.Const
