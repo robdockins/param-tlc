@@ -75,7 +75,7 @@ instance Show (TypeRepr τ) where
      showParen (d > 5) $
        showsPrec 6 x . showString " :-> " . showsPrec 5 y
   showsPrec _ (TupleRepr ctx) =
-     case view ctx of
+     case viewAssign ctx of
        AssignEmpty -> showString "Tuple()"
        AssignExtend ctx' t ->
          showString "Tuple" . showParen True
@@ -189,7 +189,7 @@ printTerm pvar prec tm = case tm of
       showString ". " . printTerm (pvar :> Const vnm) 0 x
 
   TmTuple ctx ->
-    case view ctx of
+    case viewAssign ctx of
       AssignEmpty -> showString "tuple()"
       AssignExtend ctx' t ->
         showString "tuple" . showParen True (
@@ -249,7 +249,7 @@ instance ShowFC Value where
   showsPrecFC sh prec (VAbs env τ tm) =
      printTerm (fmapFC (\x -> Const (\p -> sh p x)) env) prec (TmAbs [] τ tm)
   showsPrecFC sh prec (VTuple xs) =
-     case view xs of
+     case viewAssign xs of
        AssignEmpty -> showString "tuple()"
        AssignExtend xs' t ->
          showString "tuple" . showParen True (
