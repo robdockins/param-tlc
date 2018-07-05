@@ -19,6 +19,7 @@ library
     TLC.AST
     TLC.Eval
     TLC.TypeCheck
+    TLC.SimpleTerm
 
   default-language: Haskell2010
 
